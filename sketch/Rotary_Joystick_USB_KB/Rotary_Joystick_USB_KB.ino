@@ -32,7 +32,9 @@ const char ccw1_char = 'l';
 const char cw2_char = 'x';
 const char ccw2_char = 'z';
 
-const byte debounceTime = 30;  // switch debounce in ms
+const byte keypressDuration = 100;  // how long a keypress is held, in mS
+
+const byte debounceTime = 30;  // joystick switch contact debounce time in mS
 
 const byte sw1a = 15;  // rotary switch pins on ATMega32u4 (Arduino digital pin numbers)
 const byte sw1b = 16;
@@ -166,7 +168,7 @@ void setup() {
   if (debounced2f.read() == LOW)  // if a switch was grounded, update the status register
     bitSet(curState2, 5);
 
-  lastState1 = curState1;         // make last and current readings identical to avoid a false output trigger on power up
+  lastState1 = curState1;  // make last and current readings identical to avoid a false output trigger on power up
   lastState2 = curState2;
 
 }  // end setup()
@@ -257,27 +259,69 @@ void readJoysticks() {
 // and generate keystrokes as required
 void processJoysticks() {
 
-  int diff = (lastState1 - curState1);  // check for a difference in joystick readings
+  // keypress timers
+  static unsigned long cw1Timer = millis();
+  static unsigned long ccw1Timer = millis();
+  static unsigned long cw2Timer = millis();
+  static unsigned long ccw2Timer = millis();
+
+  // keypress flags, true if a key is being pressed and timer is running
+  static bool cw1Flag = false;
+  static bool ccw1Flag = false;
+  static bool cw2Flag = false;
+  static bool ccw2Flag = false;
+
+  // check if it is time to release any keyboard keys that have been pressed
+  if (cw1Flag) {
+    if (millis() - cw1Timer >= keypressDuration) {
+      Keyboard.release(cw1_char);  // release the keyboard key
+    }
+  }
+   if (ccw1Flag) {
+    if (millis() - ccw1Timer >= keypressDuration) {
+      Keyboard.release(ccw1_char);  // release the keyboard key
+    }
+  }
+   if (cw2Flag) {
+    if (millis() - cw2Timer >= keypressDuration) {
+      Keyboard.release(cw2_char);  // release the keyboard key
+    }
+  }
+   if (ccw2Flag) {
+    if (millis() - ccw2Timer >= keypressDuration) {
+      Keyboard.release(ccw2_char);  // release the keyboard key
+    }
+  }
+
+  int diff = (lastState1 - curState1);  // check for a difference in joystick 1 readings
 
   // clockwise rotation has occurred
   if (((diff < 0) && !((lastState1 == B000001) && (curState1 == B100000))) | ((diff > 0) && (lastState1 == B100000) && (curState1 == B000001))) {
-    Keyboard.write(cw1_char);
+    Keyboard.press(cw1_char);  // hold down the keyboard key
+    cw1Timer = millis();       // start a timer for releasing the keypress
+    cw1Flag = true;            // set a flag to track the keypress being active
   }
   // counter-clockwise rotation has occurred
   else if (((diff > 0) && !((lastState1 == B100000) && (curState1 == B000001))) | ((diff < 0) && (lastState1 == B000001) && (curState1 == B100000))) {
-    Keyboard.write(ccw1_char);
+    Keyboard.press(ccw1_char);  // hold down the keyboard key
+    ccw1Timer = millis();       // start a timer for releasing the keypress
+    ccw1Flag = true;            // set a flag to track the keypress being active
   }
-  lastState1 = curState1;
+  lastState1 = curState1;  // update joystick 1 historical state for next evaluation cycle
 
-  diff = (lastState2 - curState2);  // check for a difference in joystick readings
+  diff = (lastState2 - curState2);  // check for a difference in joystick 2 readings
 
   // clockwise rotation has occurred
   if (((diff < 0) && !((lastState2 == B000001) && (curState2 == B100000))) | ((diff > 0) && (lastState2 == B100000) && (curState2 == B000001))) {
-    Keyboard.write(cw2_char);
+    Keyboard.press(cw2_char);  // hold down the keyboard key
+    cw2Timer = millis();       // start a timer for releasing the keypress
+    cw2Flag = true;            // set a flag to track the keypress being active
   }
   // counter-clockwise rotation has occurred
   else if (((diff > 0) && !((lastState2 == B100000) && (curState2 == B000001))) | ((diff < 0) && (lastState2 == B000001) && (curState2 == B100000))) {
-    Keyboard.write(ccw2_char);
+    Keyboard.press(ccw2_char);  // hold down the keyboard key
+    ccw2Timer = millis();       // start a timer for releasing the keypress
+    ccw2Flag = true;            // set a flag to track the keypress being active
   }
-  lastState2 = curState2;
+  lastState2 = curState2;  // update joystick 2 historical state for next evaluation cycle
 }  // end processJoysticks()
