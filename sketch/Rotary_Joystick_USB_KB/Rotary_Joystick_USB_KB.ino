@@ -23,18 +23,32 @@ Gadget Reboot
 https://www.youtube.com/@gadgetreboot
 */
 
-#include "Keyboard.h"
-#include <Bounce2.h>
+#include <Keyboard.h>  // part of the Sparkfun Pro Micro board support
+#include <Bounce2.h>   // install library from library manager
+#include "RingBuf.h"   // ring buffer library file included in this sketch project, taken from https://github.com/Locoduino/RingBuffer
 
-// keyboard characters sent for rotation
-const char cw1_char = 'r';
-const char ccw1_char = 'l';
-const char cw2_char = 'x';
-const char ccw2_char = 'z';
+// track whether pending rotation keystrokes stored in a ring buffer
+// should be clockwise or counter-clockwise when the time comes to send the keystrokes out.
+// each joystick has a ring buffer to store pending keystrokes for cw or ccw rotation
+// the buffer is used when the joystick rotates faster than the USB keystrokes can be sent
+enum rotateDirection {
+  CW,  // clockwise
+  CCW  // counter-clockwise
+};
 
-const byte keypressDuration = 100;  // how long a keypress is held, in mS
+const byte keystrokeBufSize = 20;                    // number of pending keystrokes to buffer for each joystick if needed
+RingBuf<rotateDirection, keystrokeBufSize> joy1Buf;  // ring buffer to store pending keystrokes if joystick 1 moves faster than USB keypresses can keep up with
+RingBuf<rotateDirection, keystrokeBufSize> joy2Buf;  // ring buffer to store pending keystrokes if joystick 2 moves faster than USB keypresses can keep up with
 
-const byte debounceTime = 30;  // joystick switch contact debounce time in mS
+// keyboard characters sent for rotations
+const char cw1_char = 'r';   // joystick 1 clockwise character
+const char ccw1_char = 'l';  // joystick 1 counter-clockwise character
+const char cw2_char = 'x';   // joystick 2 clockwise character
+const char ccw2_char = 'z';  // joystick 2 counter-clockwise character
+
+// timing control for switch reading and keystroke sending
+const byte keypressDuration = 110;  // how long a keypress is held, in mS
+const byte debounceTime = 10;        // joystick switch contact debounce time in mS
 
 const byte sw1a = 15;  // rotary switch pins on ATMega32u4 (Arduino digital pin numbers)
 const byte sw1b = 16;
@@ -69,6 +83,8 @@ Bounce debounced2e = Bounce();
 Bounce debounced2f = Bounce();
 
 void setup() {
+
+  Keyboard.begin();
 
   pinMode(sw1a, INPUT_PULLUP);
   debounced1a.attach(sw1a);            // setup the bounce instance
@@ -174,8 +190,9 @@ void setup() {
 }  // end setup()
 
 void loop() {
-  readJoysticks();     // read the current rotary switch states into curState registers
-  processJoysticks();  // determine if a rotation has occurred and send keystrokes if so
+  readJoysticks();      // read the current rotary switch states into curState registers
+  processJoysticks();   // determine if a rotation has occurred
+  processKeystrokes();  // send keystrokes for joystick rotations that have accumulated
 }
 
 // read the joystick rotary switches into the curState register
@@ -256,72 +273,104 @@ void readJoysticks() {
 
 
 // check if rotary switches are different from last saved reading
-// and generate keystrokes as required
 void processJoysticks() {
-
-  // keypress timers
-  static unsigned long cw1Timer = millis();
-  static unsigned long ccw1Timer = millis();
-  static unsigned long cw2Timer = millis();
-  static unsigned long ccw2Timer = millis();
-
-  // keypress flags, true if a key is being pressed and timer is running
-  static bool cw1Flag = false;
-  static bool ccw1Flag = false;
-  static bool cw2Flag = false;
-  static bool ccw2Flag = false;
-
-  // check if it is time to release any keyboard keys that have been pressed
-  if (cw1Flag) {
-    if (millis() - cw1Timer >= keypressDuration) {
-      Keyboard.release(cw1_char);  // release the keyboard key
-    }
-  }
-   if (ccw1Flag) {
-    if (millis() - ccw1Timer >= keypressDuration) {
-      Keyboard.release(ccw1_char);  // release the keyboard key
-    }
-  }
-   if (cw2Flag) {
-    if (millis() - cw2Timer >= keypressDuration) {
-      Keyboard.release(cw2_char);  // release the keyboard key
-    }
-  }
-   if (ccw2Flag) {
-    if (millis() - ccw2Timer >= keypressDuration) {
-      Keyboard.release(ccw2_char);  // release the keyboard key
-    }
-  }
 
   int diff = (lastState1 - curState1);  // check for a difference in joystick 1 readings
 
-  // clockwise rotation has occurred
+  // joystick 1 clockwise rotation has occurred
   if (((diff < 0) && !((lastState1 == B000001) && (curState1 == B100000))) | ((diff > 0) && (lastState1 == B100000) && (curState1 == B000001))) {
-    Keyboard.press(cw1_char);  // hold down the keyboard key
-    cw1Timer = millis();       // start a timer for releasing the keypress
-    cw1Flag = true;            // set a flag to track the keypress being active
+    joy1Buf.push(CW);  // add a pending clockwise keystroke to joystick 1 buffer
   }
-  // counter-clockwise rotation has occurred
+  // joystick 1 counter-clockwise rotation has occurred
   else if (((diff > 0) && !((lastState1 == B100000) && (curState1 == B000001))) | ((diff < 0) && (lastState1 == B000001) && (curState1 == B100000))) {
-    Keyboard.press(ccw1_char);  // hold down the keyboard key
-    ccw1Timer = millis();       // start a timer for releasing the keypress
-    ccw1Flag = true;            // set a flag to track the keypress being active
+    joy1Buf.push(CCW);  // add a pending counter clockwise keystroke to joystick 1 buffer
   }
-  lastState1 = curState1;  // update joystick 1 historical state for next evaluation cycle
-
+  lastState1 = curState1;           // update joystick 1 historical state for next evaluation cycle
   diff = (lastState2 - curState2);  // check for a difference in joystick 2 readings
 
-  // clockwise rotation has occurred
+  // joystick 2 clockwise rotation has occurred
   if (((diff < 0) && !((lastState2 == B000001) && (curState2 == B100000))) | ((diff > 0) && (lastState2 == B100000) && (curState2 == B000001))) {
-    Keyboard.press(cw2_char);  // hold down the keyboard key
-    cw2Timer = millis();       // start a timer for releasing the keypress
-    cw2Flag = true;            // set a flag to track the keypress being active
+    joy2Buf.push(CW);  // add a pending clockwise keystroke to joystick 2 buffer
   }
-  // counter-clockwise rotation has occurred
+  // joystick 2 counter-clockwise rotation has occurred
   else if (((diff > 0) && !((lastState2 == B100000) && (curState2 == B000001))) | ((diff < 0) && (lastState2 == B000001) && (curState2 == B100000))) {
-    Keyboard.press(ccw2_char);  // hold down the keyboard key
-    ccw2Timer = millis();       // start a timer for releasing the keypress
-    ccw2Flag = true;            // set a flag to track the keypress being active
+    joy2Buf.push(CCW);  // add a pending counter clockwise keystroke to joystick 2 buffer
   }
   lastState2 = curState2;  // update joystick 2 historical state for next evaluation cycle
 }  // end processJoysticks()
+
+// generate keystrokes as required
+void processKeystrokes() {
+
+  enum rotateDirection joyDirectionValue;  // working variable for joystick/keypress direction evaluations
+
+  // keypress timers
+  static unsigned long joy1KeypressTimer = millis();
+  static unsigned long joy2KeypressTimer = millis();
+
+  // keypress flags, true if a key is being pressed and timer is running
+  static bool joy1_CW_KeypressFlag = false;
+  static bool joy1_CCW_KeypressFlag = false;
+  static bool joy2_CW_KeypressFlag = false;
+  static bool joy2_CCW_KeypressFlag = false;
+
+  // joystick 1 check if keystrokes are pending in buffer and start a keypress if it is time
+  if ((joy1Buf.size() > 0) && !joy1_CW_KeypressFlag && !joy1_CCW_KeypressFlag) {
+    if (joy1Buf.pop(joyDirectionValue)) {  // get the pending joystick rotation direction from the buffer for the next keypress
+      if (joyDirectionValue == CW) {
+        Keyboard.press(cw1_char);     // press the joystick 1 clockwise keyboard key
+        joy1_CW_KeypressFlag = true;  // set a flag to track that a keypress is active
+      } else if (joyDirectionValue == CCW) {
+        Keyboard.press(ccw1_char);    // press the joystick 1 counter clockwise keyboard key
+        joy1_CCW_KeypressFlag = true;  // set a flag to track that a keypress is active
+      }
+    }
+    joy1KeypressTimer = millis();  // start a timer for holding down the keypress
+  }
+
+  // joystick 2 check if keystrokes are pending in buffer and start a keypress if it is time
+  if ((joy2Buf.size() > 0) && !joy2_CW_KeypressFlag && !joy2_CCW_KeypressFlag) {
+    if (joy2Buf.pop(joyDirectionValue)) {  // get the pending joystick rotation direction from the buffer for the next keypress
+      if (joyDirectionValue == CW) {
+        Keyboard.press(cw2_char);     // press the joystick 2 clockwise keyboard key
+        joy2_CW_KeypressFlag = true;  // set a flag to track that a keypress is active
+      } else if (joyDirectionValue == CCW) {
+        Keyboard.press(ccw2_char);    // press the joystick 2 counter clockwise keyboard key
+        joy2_CCW_KeypressFlag = true;  // set a flag to track that a keypress is active
+      }
+    }
+    joy2KeypressTimer = millis();  // start a timer for holding down the keypress
+  }
+
+
+
+
+  // check if it is time to release any keyboard keys that have been pressed
+  if (joy1_CW_KeypressFlag) {
+    if (millis() - joy1KeypressTimer >= keypressDuration) {
+      Keyboard.release(cw1_char);  // release the keyboard key
+      joy1_CW_KeypressFlag = false;
+    }
+  }
+
+  if (joy1_CCW_KeypressFlag) {
+    if (millis() - joy1KeypressTimer >= keypressDuration) {
+      Keyboard.release(ccw1_char);  // release the keyboard key
+      joy1_CCW_KeypressFlag = false;
+    }
+  }
+
+  if (joy2_CW_KeypressFlag) {
+    if (millis() - joy2KeypressTimer >= keypressDuration) {
+      Keyboard.release(cw2_char);  // release the keyboard key
+      joy2_CW_KeypressFlag = false;
+    }
+  }
+
+  if (joy2_CCW_KeypressFlag) {
+    if (millis() - joy2KeypressTimer >= keypressDuration) {
+      Keyboard.release(ccw2_char);  // release the keyboard key
+      joy2_CCW_KeypressFlag = false;
+    }
+  }
+}
