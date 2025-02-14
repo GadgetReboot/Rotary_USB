@@ -1,4 +1,8 @@
 /*
+Note:  In the MAME analog controls settings, increase the sensitivity to improve the ability of 
+       MAME to respond to the USB rotate keys with minimal lag.
+       A value of 28 for analog sensitivity may be a good starting point
+       
  LS-30 Rotary Joystick to MAME Interface
  using ATMega32u4 with a Pro Micro bootloader for USB keyboard emulation
 
@@ -47,8 +51,8 @@ const char cw2_char = 'x';   // joystick 2 clockwise character
 const char ccw2_char = 'z';  // joystick 2 counter-clockwise character
 
 // timing control for switch reading and keystroke sending
-const byte keypressDuration = 110;  // how long a keypress is held, in mS
-const byte debounceTime = 10;        // joystick switch contact debounce time in mS
+const byte keypressDuration = 60;  // how long a keypress is held, in mS. some computers need longer on-time to detect key presses
+const byte debounceTime = 10;       // joystick switch contact debounce time in mS
 
 const byte sw1a = 15;  // rotary switch pins on ATMega32u4 (Arduino digital pin numbers)
 const byte sw1b = 16;
@@ -84,8 +88,9 @@ Bounce debounced2f = Bounce();
 
 void setup() {
 
-  Keyboard.begin();
+  Keyboard.begin();  // USB keyboard
 
+  // configure debouncers on switch inputs
   pinMode(sw1a, INPUT_PULLUP);
   debounced1a.attach(sw1a);            // setup the bounce instance
   debounced1a.interval(debounceTime);  // debounce interval in ms
@@ -134,54 +139,31 @@ void setup() {
   debounced2f.attach(sw2f);            // setup the bounce instance
   debounced2f.interval(debounceTime);  // debounce interval in ms
 
-  // take an initial reading of the rotary switches
-
-  debounced1a.update();           // update the switch status
-  if (debounced1a.read() == LOW)  // if a switch was grounded, update the status register
+  // get initial pre-debounced joystick readings at power up to establish a starting position
+  if (digitalRead(sw1a) == LOW)  // if a switch was grounded, update the status register
     bitSet(curState1, 0);
-
-  debounced1b.update();           // update the switch status
-  if (debounced1b.read() == LOW)  // if a switch was grounded, update the status register
+  if (digitalRead(sw1b) == LOW)  // if a switch was grounded, update the status register
     bitSet(curState1, 1);
-
-  debounced1c.update();           // update the switch status
-  if (debounced1c.read() == LOW)  // if a switch was grounded, update the status register
+  if (digitalRead(sw1c) == LOW)  // if a switch was grounded, update the status register
     bitSet(curState1, 2);
-
-  debounced1d.update();           // update the switch status
-  if (debounced1d.read() == LOW)  // if a switch was grounded, update the status register
+  if (digitalRead(sw1d) == LOW)  // if a switch was grounded, update the status register
     bitSet(curState1, 3);
-
-  debounced1e.update();           // update the switch status
-  if (debounced1e.read() == LOW)  // if a switch was grounded, update the status register
+  if (digitalRead(sw1e) == LOW)  // if a switch was grounded, update the status register
     bitSet(curState1, 4);
-
-  debounced1f.update();           // update the switch status
-  if (debounced1f.read() == LOW)  // if a switch was grounded, update the status register
+  if (digitalRead(sw1f) == LOW)  // if a switch was grounded, update the status register
     bitSet(curState1, 5);
 
-  debounced2a.update();           // update the switch status
-  if (debounced2a.read() == LOW)  // if a switch was grounded, update the status register
+  if (digitalRead(sw2a) == LOW)  // if a switch was grounded, update the status register
     bitSet(curState2, 0);
-
-  debounced2b.update();           // update the switch status
-  if (debounced2b.read() == LOW)  // if a switch was grounded, update the status register
+  if (digitalRead(sw2b) == LOW)  // if a switch was grounded, update the status register
     bitSet(curState2, 1);
-
-  debounced2c.update();           // update the switch status
-  if (debounced2c.read() == LOW)  // if a switch was grounded, update the status register
+  if (digitalRead(sw2c) == LOW)  // if a switch was grounded, update the status register
     bitSet(curState2, 2);
-
-  debounced2d.update();           // update the switch status
-  if (debounced2d.read() == LOW)  // if a switch was grounded, update the status register
+  if (digitalRead(sw2d) == LOW)  // if a switch was grounded, update the status register
     bitSet(curState2, 3);
-
-  debounced2e.update();           // update the switch status
-  if (debounced2e.read() == LOW)  // if a switch was grounded, update the status register
+  if (digitalRead(sw2e) == LOW)  // if a switch was grounded, update the status register
     bitSet(curState2, 4);
-
-  debounced2f.update();           // update the switch status
-  if (debounced2f.read() == LOW)  // if a switch was grounded, update the status register
+  if (digitalRead(sw2f) == LOW)  // if a switch was grounded, update the status register
     bitSet(curState2, 5);
 
   lastState1 = curState1;  // make last and current readings identical to avoid a false output trigger on power up
@@ -304,46 +286,45 @@ void processKeystrokes() {
 
   enum rotateDirection joyDirectionValue;  // working variable for joystick/keypress direction evaluations
 
-  // keypress timers
+  // keypress hold-on duration timers
   static unsigned long joy1KeypressTimer = millis();
   static unsigned long joy2KeypressTimer = millis();
 
-  // keypress flags, true if a key is being pressed and timer is running
+  // keypress flags, true if a USB keyboard key is being held on and timer is running
   static bool joy1_CW_KeypressFlag = false;
   static bool joy1_CCW_KeypressFlag = false;
   static bool joy2_CW_KeypressFlag = false;
   static bool joy2_CCW_KeypressFlag = false;
 
-  // joystick 1 check if keystrokes are pending in buffer and start a keypress if it is time
+  // joystick 1 check if keystrokes are pending in buffer and start a keypress
+  // if there is currently no key being pressed
   if ((joy1Buf.size() > 0) && !joy1_CW_KeypressFlag && !joy1_CCW_KeypressFlag) {
-    if (joy1Buf.pop(joyDirectionValue)) {  // get the pending joystick rotation direction from the buffer for the next keypress
+    if (joy1Buf.pop(joyDirectionValue)) {  // get the next pending joystick rotation direction from the buffer for the next keypress
       if (joyDirectionValue == CW) {
         Keyboard.press(cw1_char);     // press the joystick 1 clockwise keyboard key
         joy1_CW_KeypressFlag = true;  // set a flag to track that a keypress is active
       } else if (joyDirectionValue == CCW) {
-        Keyboard.press(ccw1_char);    // press the joystick 1 counter clockwise keyboard key
+        Keyboard.press(ccw1_char);     // press the joystick 1 counter clockwise keyboard key
         joy1_CCW_KeypressFlag = true;  // set a flag to track that a keypress is active
       }
     }
     joy1KeypressTimer = millis();  // start a timer for holding down the keypress
   }
 
-  // joystick 2 check if keystrokes are pending in buffer and start a keypress if it is time
+  // joystick 2 check if keystrokes are pending in buffer and start a keypress
+  // if there is currently no key being pressed
   if ((joy2Buf.size() > 0) && !joy2_CW_KeypressFlag && !joy2_CCW_KeypressFlag) {
-    if (joy2Buf.pop(joyDirectionValue)) {  // get the pending joystick rotation direction from the buffer for the next keypress
+    if (joy2Buf.pop(joyDirectionValue)) {  // get the next pending joystick rotation direction from the buffer for the next keypress
       if (joyDirectionValue == CW) {
         Keyboard.press(cw2_char);     // press the joystick 2 clockwise keyboard key
         joy2_CW_KeypressFlag = true;  // set a flag to track that a keypress is active
       } else if (joyDirectionValue == CCW) {
-        Keyboard.press(ccw2_char);    // press the joystick 2 counter clockwise keyboard key
+        Keyboard.press(ccw2_char);     // press the joystick 2 counter clockwise keyboard key
         joy2_CCW_KeypressFlag = true;  // set a flag to track that a keypress is active
       }
     }
     joy2KeypressTimer = millis();  // start a timer for holding down the keypress
   }
-
-
-
 
   // check if it is time to release any keyboard keys that have been pressed
   if (joy1_CW_KeypressFlag) {
